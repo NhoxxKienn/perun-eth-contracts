@@ -21,6 +21,7 @@ import "./Channel.sol";
 import "./App.sol";
 import "./AssetHolder.sol";
 import "./Array.sol";
+import "./MultiLedger.sol";
 
 /**
  * @title The Perun Adjudicator
@@ -28,7 +29,6 @@ import "./Array.sol";
  * @dev Adjudicator is the contract that decides on the current state of a statechannel.
  */
 contract Adjudicator {
-
     /**
      * @dev Our state machine has three phases.
      * In the DISPUTE phase, all parties have the ability to publish their latest state.
@@ -152,10 +152,7 @@ contract Adjudicator {
 
         if (params.virtualChannel) {
             require(!Channel.hasApp(params), "cannot have app");
-            require(
-                state.outcome.locked.length == 0,
-                "funds locked"
-            );
+            require(state.outcome.locked.length == 0, "funds locked");
         }
 
         // If registered, require newer version and refutation timeout not passed.
@@ -286,7 +283,9 @@ contract Adjudicator {
         Channel.validateSignatures(params, state, sigs);
 
         // If registered, require not concluded.
-        (Dispute storage dispute, bool registered) = getDispute(state.channelID);
+        (Dispute storage dispute, bool registered) = getDispute(
+            state.channelID
+        );
         if (registered) {
             require(
                 dispute.phase != uint8(DisputePhase.CONCLUDED),
@@ -338,6 +337,35 @@ contract Adjudicator {
     }
 
     /**
+     * @dev Returns whether a coordinator identity is configured in params.
+     */
+    function isCoordinatorConfigured(
+        Channel.Params memory params
+    ) internal pure returns (bool) {
+        return MultiLedger.isCoordinatorConfigured(params);
+    }
+
+    /**
+     * @dev Returns whether a state outcome spans multiple ledgers.
+     * The on-chain ledger key is represented as (backend, chainID) per asset.
+     */
+    function isMultiLedgerState(
+        Channel.State memory state
+    ) internal pure returns (bool) {
+        return MultiLedger.isMultiLedgerState(state);
+    }
+
+    /**
+     * @dev Returns whether a channel is eligible for coordinated settlement.
+     */
+    function isCoordinatedEligible(
+        Channel.Params memory params,
+        Channel.State memory state
+    ) internal pure returns (bool) {
+        return MultiLedger.isCoordinatedEligible(params, state);
+    }
+
+    /**
      * @dev Updates the dispute state according to the given parameters, state,
      * and phase, and determines the corresponding phase timeout.
      * @param params The parameters of the state channel.
@@ -349,7 +377,9 @@ contract Adjudicator {
         Channel.State memory state,
         DisputePhase disputePhase
     ) internal {
-        (Dispute storage dispute, bool registered) = getDispute(state.channelID);
+        (Dispute storage dispute, bool registered) = getDispute(
+            state.channelID
+        );
 
         dispute.challengeDuration = uint64(params.challengeDuration);
         dispute.version = state.version;
@@ -367,7 +397,9 @@ contract Adjudicator {
         ) {
             // Increment timeout if channel is not registered or in phase FORCEEXEC.
             // solhint-disable-next-line not-rely-on-time
-            dispute.timeout = uint64(block.timestamp) + dispute.challengeDuration;
+            dispute.timeout =
+                uint64(block.timestamp) +
+                dispute.challengeDuration;
         }
 
         setDispute(state.channelID, dispute);

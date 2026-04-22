@@ -272,20 +272,20 @@ export class Authorization {
   encode() {
     const abiCoder = AbiCoder.defaultAbiCoder();
     return abiCoder.encode(
-        [
-          'tuple(bytes32 channelID, tuple(address ethAddress, bytes ccAddress) participant, address receiver, uint256 amount)'
-        ],
-        [
-          {
-            channelID: this.channelID,
-            participant: {
-              ethAddress: this.participant.ethAddress,
-              ccAddress: this.participant.ccAddress,
-            },
-            receiver: this.receiver,
-            amount: ethers.parseUnits(this.amount, 'wei')
-          }
-        ]
+      [
+        'tuple(bytes32 channelID, tuple(address ethAddress, bytes ccAddress) participant, address receiver, uint256 amount)'
+      ],
+      [
+        {
+          channelID: this.channelID,
+          participant: {
+            ethAddress: this.participant.ethAddress,
+            ccAddress: this.participant.ccAddress,
+          },
+          receiver: this.receiver,
+          amount: ethers.parseUnits(this.amount, 'wei')
+        }
+      ]
     );
   }
 }
