@@ -28,6 +28,7 @@ library Channel {
         address app;
         bool ledgerChannel;
         bool virtualChannel;
+        address coordinator;
     }
 
     struct Participant {

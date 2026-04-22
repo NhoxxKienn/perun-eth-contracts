@@ -67,14 +67,16 @@ export class Params {
   participants: Participant[];
   ledgerChannel: boolean;
   virtualChannel: boolean;
+  coordinator: string;
 
-  constructor(app: string, challengeDuration: number, nonce: string, participants: Participant[], ledgerChannel: boolean) {
+  constructor(app: string, challengeDuration: number, nonce: string, participants: Participant[], ledgerChannel: boolean, coordinator: string = ethers.ZeroAddress) {
     this.app = app;
     this.challengeDuration = challengeDuration;
     this.nonce = nonce;
     this.participants = participants;
     this.ledgerChannel = ledgerChannel;
     this.virtualChannel = false;
+    this.coordinator = coordinator;
   }
 
   serialize() {
@@ -88,6 +90,7 @@ export class Params {
       })),
       ledgerChannel: this.ledgerChannel,
       virtualChannel: this.virtualChannel,
+      coordinator: this.coordinator,
     };
   }
 
@@ -95,7 +98,7 @@ export class Params {
     const abiCoder = AbiCoder.defaultAbiCoder();
 
     const paramsType = [
-      "tuple(uint256 challengeDuration, uint256 nonce, tuple(address ethAddress, bytes ccAddress)[] participants, address app, bool ledgerChannel, bool virtualChannel)"
+      "tuple(uint256 challengeDuration, uint256 nonce, tuple(address ethAddress, bytes ccAddress)[] participants, address app, bool ledgerChannel, bool virtualChannel, address coordinator)"
     ];
 
     return abiCoder.encode(paramsType, [{
@@ -107,7 +110,8 @@ export class Params {
       })),
       app: this.app,
       ledgerChannel: this.ledgerChannel,
-      virtualChannel: this.virtualChannel
+      virtualChannel: this.virtualChannel,
+      coordinator: this.coordinator
     }]);
   }
 
