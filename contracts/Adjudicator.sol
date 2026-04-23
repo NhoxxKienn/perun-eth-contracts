@@ -38,7 +38,8 @@ contract Adjudicator {
     enum DisputePhase {
         DISPUTE,
         FORCEEXEC,
-        CONCLUDED
+        CONCLUDED,
+        COORDINATED
     }
 
     struct Dispute {
@@ -363,6 +364,14 @@ contract Adjudicator {
         Channel.State memory state
     ) internal pure returns (bool) {
         return MultiLedger.isCoordinatedEligible(params, state);
+    }
+
+    function canEnterCoordinated(
+        Dispute storage dispute,
+        Channel.Params memory params,
+        Channel.State memory state
+    ) internal view returns (bool) {
+        return MultiLedger.canEnterCoordinated(dispute.phase, params, state);
     }
 
     /**

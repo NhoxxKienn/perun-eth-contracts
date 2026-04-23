@@ -20,6 +20,8 @@ pragma abicoder v2;
 import "./Channel.sol";
 
 library MultiLedger {
+    uint8 internal constant DISPUTE_PHASE_CONCLUDED = 2;
+
     function isCoordinatorConfigured(
         Channel.Params memory params
     ) internal pure returns (bool) {
@@ -59,5 +61,15 @@ library MultiLedger {
         Channel.State memory state
     ) internal pure returns (bool) {
         return isCoordinatorConfigured(params) && isMultiLedgerState(state);
+    }
+
+    function canEnterCoordinated(
+        uint8 currentPhase,
+        Channel.Params memory params,
+        Channel.State memory state
+    ) internal pure returns (bool) {
+        return
+            currentPhase == DISPUTE_PHASE_CONCLUDED &&
+            isCoordinatedEligible(params, state);
     }
 }

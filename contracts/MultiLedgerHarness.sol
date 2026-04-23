@@ -21,6 +21,14 @@ import "./Channel.sol";
 import "./MultiLedger.sol";
 
 contract MultiLedgerHarness {
+    function canEnterCoordinatedHarness(
+        uint8 currentPhase,
+        Channel.Params memory params,
+        Channel.State memory state
+    ) external pure returns (bool) {
+        return MultiLedger.canEnterCoordinated(currentPhase, params, state);
+    }
+
     function isMultiLedgerStateHarness(
         Channel.State memory state
     ) external pure returns (bool) {
