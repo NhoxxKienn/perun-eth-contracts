@@ -30,10 +30,11 @@ import "./MultiLedger.sol";
  */
 contract Adjudicator {
     /**
-     * @dev Our state machine has three phases.
+     * @dev Our state machine has four phases.
      * In the DISPUTE phase, all parties have the ability to publish their latest state.
      * In the FORCEEXEC phase, the smart contract is executed on-chain.
      * In the CONCLUDED phase, the channel is considered finalized.
+     * In the COORDINATED phase, coordinated multi-ledger settlement is committed.
      */
     enum DisputePhase {
         DISPUTE,
@@ -304,6 +305,55 @@ contract Adjudicator {
     }
 
     /**
+     * @notice Commits a coordinator-certified canonical state for coordinated
+     * multi-ledger settlement.
+     *
+     * @dev The canonical state must be signed by all participants and by the
+     * configured coordinator using the regular state-signature semantics.
+     */
+    function commitCoordinated(
+        Channel.Params memory params,
+        Channel.State memory canonicalState,
+        bytes[] memory participantSigs,
+        bytes memory coordSig
+    ) external {
+        requireValidParams(params, canonicalState);
+
+        Dispute storage dispute = requireGetDispute(canonicalState.channelID);
+        require(
+            MultiLedger.canEnterCoordinated(
+                dispute.phase,
+                params,
+                canonicalState
+            ),
+            "incorrect phase"
+        );
+        // solhint-disable-next-line not-rely-on-time
+        require(block.timestamp >= dispute.timeout, "timeout not passed");
+        require(
+            canonicalState.version >= dispute.version,
+            "invalid version"
+        );
+
+        requireAssetPreservation(
+            canonicalState.outcome,
+            canonicalState.outcome,
+            params.participants.length
+        );
+        Channel.validateSignatures(params, canonicalState, participantSigs);
+        require(
+            Sig.verify(Channel.encodeState(canonicalState), coordSig, params.coordinator),
+            "invalid signature"
+        );
+
+        dispute.version = canonicalState.version;
+        dispute.stateHash = hashState(canonicalState);
+        dispute.phase = uint8(DisputePhase.COORDINATED);
+
+        setDispute(canonicalState.channelID, dispute);
+    }
+
+    /**
      * @notice Calculates the channel's ID from the given parameters.
      * @param params The parameters of the channel.
      * @return The ID of the channel.
@@ -335,43 +385,6 @@ contract Adjudicator {
         Channel.State memory state
     ) internal pure {
         require(state.channelID == channelID(params), "invalid params");
-    }
-
-    /**
-     * @dev Returns whether a coordinator identity is configured in params.
-     */
-    function isCoordinatorConfigured(
-        Channel.Params memory params
-    ) internal pure returns (bool) {
-        return MultiLedger.isCoordinatorConfigured(params);
-    }
-
-    /**
-     * @dev Returns whether a state outcome spans multiple ledgers.
-     * The on-chain ledger key is represented as (backend, chainID) per asset.
-     */
-    function isMultiLedgerState(
-        Channel.State memory state
-    ) internal pure returns (bool) {
-        return MultiLedger.isMultiLedgerState(state);
-    }
-
-    /**
-     * @dev Returns whether a channel is eligible for coordinated settlement.
-     */
-    function isCoordinatedEligible(
-        Channel.Params memory params,
-        Channel.State memory state
-    ) internal pure returns (bool) {
-        return MultiLedger.isCoordinatedEligible(params, state);
-    }
-
-    function canEnterCoordinated(
-        Dispute storage dispute,
-        Channel.Params memory params,
-        Channel.State memory state
-    ) internal view returns (bool) {
-        return MultiLedger.canEnterCoordinated(dispute.phase, params, state);
     }
 
     /**
