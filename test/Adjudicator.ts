@@ -27,7 +27,7 @@ import { AssetHolderETH } from "../typechain-types";
 import { Adjudicator__factory } from "../typechain-types";
 import { AssetHolderETH__factory } from "../typechain-types";
 import { TrivialApp__factory } from "../typechain-types";
-import { DisputePhase,Channel, SignedChannel, Params, Allocation, SubAlloc, Transaction, State, Asset, Participant } from "./Channel";
+import { DisputePhase, Channel, SignedChannel, Params, Allocation, SubAlloc, Transaction, State, Asset, Participant } from "./Channel";
 import {
     ether,
     getChainID
@@ -401,7 +401,7 @@ describe("Adjudicator", function () {
                 .map(byte => byte.toString(16).padStart(2, '0')) // Convert each byte to hex
                 .join('');
             console.log("ChannelID: ", channelID);
-            const state = new State("0x"+channelID, "0", outcome, "0x"+app, false);
+            const state = new State("0x" + channelID, "0", outcome, "0x" + app, false);
             const tx = new Transaction(parts, balance, timeout, nonce, asset, backend, appAddress);
             tx.state = state;
             tx.params = params;

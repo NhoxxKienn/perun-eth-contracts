@@ -16,7 +16,7 @@ import { sign } from "../src/lib/web3";
 import { ethers } from "hardhat";
 import { BigNumberish, keccak256, AbiCoder, getBytes } from "ethers";
 
-export enum DisputePhase { DISPUTE, FORCEEXEC, CONCLUDED, COORDINATED }
+export enum DisputePhase { DISPUTE, FORCEEXEC, COORDINATED, CONCLUDED }
 
 export class Channel {
   params: Params

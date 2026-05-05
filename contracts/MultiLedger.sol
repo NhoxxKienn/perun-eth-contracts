@@ -21,6 +21,9 @@ import "./Channel.sol";
 
 library MultiLedger {
     uint8 internal constant DISPUTE_PHASE_DISPUTE = 0;
+    uint8 internal constant DISPUTE_PHASE_FORCEEXEC = 1;
+    uint8 internal constant DISPUTE_PHASE_COORDINATED = 2;
+    uint8 internal constant DISPUTE_PHASE_CONCLUDED = 3;
 
     function isCoordinatorConfigured(
         Channel.Params memory params
@@ -70,6 +73,16 @@ library MultiLedger {
     ) internal pure returns (bool) {
         return
             currentPhase == DISPUTE_PHASE_DISPUTE &&
+            isCoordinatedEligible(params, state);
+    }
+
+    function canEnterConcluded(
+        uint8 currentPhase,
+        Channel.Params memory params,
+        Channel.State memory state
+    ) internal pure returns (bool) {
+        return
+            currentPhase == DISPUTE_PHASE_COORDINATED &&
             isCoordinatedEligible(params, state);
     }
 }

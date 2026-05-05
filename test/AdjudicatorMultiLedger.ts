@@ -128,7 +128,7 @@ describe("Adjudicator Multi-Ledger Qualification", function () {
         expect(singleLedgerEligible).to.equal(false);
     });
 
-    it("allows coordinated entry only from Concluded and only when coordinated-eligible", async () => {
+    it("allows coordinated entry only from DISPUTE and only when coordinated-eligible", async () => {
         const harness = await ethers.deployContract("MultiLedgerHarness");
         await harness.waitForDeployment();
 
@@ -149,12 +149,12 @@ describe("Adjudicator Multi-Ledger Qualification", function () {
         );
         const eligibleState = makeState(eligibleParams, [multiAssetA, multiAssetB], [1, 1]);
 
-        const canFromConcluded = await harness.canEnterCoordinatedHarness(
-            2,
+        const canFromDispute = await harness.canEnterCoordinatedHarness(
+            0,
             eligibleParams.serialize(),
             eligibleState.serialize()
         );
-        expect(canFromConcluded).to.equal(true);
+        expect(canFromDispute).to.equal(true);
 
         const canFromForceExec = await harness.canEnterCoordinatedHarness(
             1,
@@ -173,11 +173,64 @@ describe("Adjudicator Multi-Ledger Qualification", function () {
         );
         const ineligibleState = makeState(ineligibleParams, [multiAssetA, multiAssetB], [1, 1]);
 
-        const ineligibleFromConcluded = await harness.canEnterCoordinatedHarness(
+        const ineligibleFromDispute = await harness.canEnterCoordinatedHarness(
+            0,
+            ineligibleParams.serialize(),
+            ineligibleState.serialize()
+        );
+        expect(ineligibleFromDispute).to.equal(false);
+    });
+
+    it("allows concluded entry only from Coordinated and only when coordinated-eligible", async () => {
+        const harness = await ethers.deployContract("MultiLedgerHarness");
+        await harness.waitForDeployment();
+
+        const signers = await ethers.getSigners();
+        const coordinator = await signers[3].getAddress();
+        const participants = await makeParticipants();
+
+        const multiAssetA = new Asset(1337, ethers.ZeroAddress, zeroAddress);
+        const multiAssetB = new Asset(1, ethers.ZeroAddress, zeroAddress);
+
+        const eligibleParams = new Params(
+            ethers.ZeroAddress,
+            60,
+            "8",
+            participants,
+            true,
+            coordinator
+        );
+        const eligibleState = makeState(eligibleParams, [multiAssetA, multiAssetB], [1, 1]);
+
+        const canFromCoordinated = await harness.canEnterConcludedHarness(
+            2,
+            eligibleParams.serialize(),
+            eligibleState.serialize()
+        );
+        expect(canFromCoordinated).to.equal(true);
+
+        const canFromForceExec = await harness.canEnterConcludedHarness(
+            1,
+            eligibleParams.serialize(),
+            eligibleState.serialize()
+        );
+        expect(canFromForceExec).to.equal(false);
+
+        const ineligibleParams = new Params(
+            ethers.ZeroAddress,
+            60,
+            "9",
+            participants,
+            true,
+            ethers.ZeroAddress
+        );
+        const ineligibleState = makeState(ineligibleParams, [multiAssetA, multiAssetB], [1, 1]);
+
+        const ineligibleFromCoordinated = await harness.canEnterConcludedHarness(
             2,
             ineligibleParams.serialize(),
             ineligibleState.serialize()
         );
-        expect(ineligibleFromConcluded).to.equal(false);
+        expect(ineligibleFromCoordinated).to.equal(false);
     });
 });
