@@ -43,6 +43,17 @@ In case of a channel dispute, any party can `register` their final state on the 
 After state registration, the other channel participants have the chance to `refute` the submitted state with a higher-version state during the challenge period.
 After the challenge period is over, the channel outcome can either be finalized on the asset holders by calling `conclude` or the app's state can be progressed on-chain by calling `progress`.
 
+### Coordinated multi-ledger settlement
+
+
+- Flow: `register` (DISPUTE) → optionally `coordinate` (COORDINATED) → `conclude` (CONCLUDED)
+- Coordinated settlement allows a coordinator to commit canonical states across
+  multiple ledgers (chains/backends).
+- Coordination requires: a ledger channel, a configured `coordinator` in `Params`,
+  and a multi-ledger state (>= 2 distinct (backend, chainId) asset pairs).
+
+Relevant test examples: `test/Channel.ts` and `test/AdjudicatorCoordinate.ts`.
+
 ### App Contracts
 State Channel apps define a single method, `validTransition`, which defines the app-specific state transition rules.
 When a channel state is progressed on-chain on the Adjudicator by calling `progress`, the Adjudicator reads the address of the channel app from the channel parameters and, after performing generic state progression checks, calls the `validTransition` method on the app.
