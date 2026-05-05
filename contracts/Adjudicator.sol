@@ -39,8 +39,8 @@ contract Adjudicator {
     enum DisputePhase {
         DISPUTE,
         FORCEEXEC,
-        CONCLUDED,
-        COORDINATED
+        COORDINATED,
+        CONCLUDED
     }
 
     struct Dispute {
@@ -182,6 +182,141 @@ contract Adjudicator {
     }
 
     /**
+     * @notice coordinate is used to commit a coordinated multi-ledger settlement.
+     * The caller must provide a canonical state and the states of all sub-channels.
+     * The canonical state must be signed by all participants and the coordinator.
+     *
+     * @dev The caller must provide a valid signature sig from the coordinator on the canonical state.
+     *
+     * @param channel The ledger channel to be registered.
+     * @param subChannels The sub-channels in depth-first order.
+     * @param coordSigs Signatures of the coordinator on the canonical states.
+     */
+    function coordinate(
+        SignedState memory channel,
+        SignedState[] memory subChannels,
+        bytes[] memory coordSigs
+    ) external {
+        require(channel.params.ledgerChannel, "not ledger");
+        requireValidParams(channel.params, channel.state);
+        require(
+            coordSigs.length == 1 + subChannels.length,
+            "coordSigs length mismatch"
+        );
+        coordinateRecursive(channel, subChannels, coordSigs, 0);
+    }
+
+    /**
+     * @dev coordinateRecursive commits a coordinator-certified canonical state for a channel and its sub-channels.
+     * It checks the requirements for coordinated settlement and updates the dispute state to COORDINATED.
+     *
+     * @param channel is the main channel to be registered.
+     * @param subChannels is a list of subChannels.
+     * @param coordSigs is the signatures of the coordinator on the canonical states.
+     * @param startIndex is the index of the first sub-channel of channel in subChannels.
+     *
+     * @return outcome The accumulated outcome of the channel and its sub-channels.
+     * @return nextIndex The index of the next sub-channel.
+     */
+    function coordinateRecursive(
+        SignedState memory channel,
+        SignedState[] memory subChannels,
+        bytes[] memory coordSigs,
+        uint startIndex
+    ) internal returns (uint256[] memory outcome, uint nextIndex) {
+        nextIndex = startIndex;
+        Channel.Allocation memory alloc = channel.state.outcome;
+        Channel.Asset[] memory assets = alloc.assets;
+
+        // Coordinate the channel and add the balances to outcome.
+        coordinateSingle(channel, coordSigs[nextIndex]);
+        outcome = Array.accumulateUint256ArrayArray(alloc.balances);
+
+        // For each sub-channel, coordinate recursively and check the accumulated
+        // outcome against the locked assets.
+        Channel.SubAlloc[] memory locked = alloc.locked;
+        require(locked.length <= subChannels.length, "subChannels too short");
+
+        for (uint s = 0; s < locked.length; ++s) {
+            SignedState memory _channel = subChannels[nextIndex++];
+            (Channel.SubAlloc memory subAlloc, Channel.State memory _state) = (
+                locked[s],
+                _channel.state
+            );
+            require(subAlloc.ID == _state.channelID, "invalid sub-channel id");
+
+            uint256[] memory _outcome;
+            (_outcome, nextIndex) = coordinateRecursive(
+                _channel,
+                subChannels,
+                coordSigs,
+                nextIndex
+            );
+
+            Channel.requireEqualAssetArray(assets, _state.outcome.assets);
+            Array.requireEqualUint256Array(subAlloc.balances, _outcome);
+            Array.addInplaceUint256Array(outcome, _outcome);
+        }
+    }
+
+    /**
+     * @dev coordinateSingle commits a coordinator-certified canonical state for a channel.
+     * It checks the requirements for coordinated settlement and updates the dispute state to COORDINATED
+     *
+     * Requirements:
+     * - The channel must be eligible for coordinated settlement.
+     * - The channel state must be signed by all participants and the coordinator.
+     * - The channel state must be registered and in the correct phase for coordinated settlement.
+     *
+     * @param channel is the channel to be coordinated.
+     *
+     */
+    function coordinateSingle(
+        SignedState memory channel,
+        bytes memory coordSig
+    ) internal {
+        (Channel.Params memory params, Channel.State memory state) = (
+            channel.params,
+            channel.state
+        );
+
+        requireValidParams(params, state);
+
+        // Require registered and eligible for coordinated settlement.
+        // Also checks that the timeout has passed.
+        (Dispute storage dispute, bool registered) = getDispute(
+            state.channelID
+        );
+        require(registered, "not registered");
+        require(
+            MultiLedger.canEnterCoordinated(dispute.phase, params, state),
+            "incorrect phase"
+        );
+
+        // Challenge window must be closed.
+        // solhint-disable-next-line not-rely-on-time
+        require(
+            block.timestamp >= dispute.timeout,
+            "refutation timeout not passed"
+        );
+        // Version must not go backwards.
+        require(state.version >= dispute.version, "invalid version");
+        // Require signatures of all participants and coordinator.
+        Channel.validateSignatures(params, state, channel.sigs);
+        Channel.validateCoordinatorSignature(params, state, coordSig);
+
+        // State-progress: coordinator brings sigma* from sibling chain.
+        // Only overwrite if version is strictly higher; otherwise keep stored hash.
+        if (state.version > dispute.version) {
+            dispute.version = state.version;
+            dispute.stateHash = hashState(state);
+        }
+        dispute.phase = uint8(DisputePhase.COORDINATED);
+        // Write state.
+        setDispute(state.channelID, dispute);
+    }
+
+    /**
      * @notice Progress is used to advance the state of an app on-chain.
      * If the call was successful, a Progressed event is emitted.
      *
@@ -247,7 +382,7 @@ contract Adjudicator {
         require(params.ledgerChannel, "not ledger");
         requireValidParams(params, state);
 
-        concludeSingle(state);
+        concludeSingle(params, state);
         (uint256[][] memory outcome, ) = forceConcludeRecursive(
             state,
             subStates,
@@ -302,55 +437,6 @@ contract Adjudicator {
             params.participants,
             state.outcome.balances
         );
-    }
-
-    /**
-     * @notice Commits a coordinator-certified canonical state for coordinated
-     * multi-ledger settlement.
-     *
-     * @dev The canonical state must be signed by all participants and by the
-     * configured coordinator using the regular state-signature semantics.
-     */
-    function commitCoordinated(
-        Channel.Params memory params,
-        Channel.State memory canonicalState,
-        bytes[] memory participantSigs,
-        bytes memory coordSig
-    ) external {
-        requireValidParams(params, canonicalState);
-
-        Dispute storage dispute = requireGetDispute(canonicalState.channelID);
-        require(
-            MultiLedger.canEnterCoordinated(
-                dispute.phase,
-                params,
-                canonicalState
-            ),
-            "incorrect phase"
-        );
-        // solhint-disable-next-line not-rely-on-time
-        require(block.timestamp >= dispute.timeout, "timeout not passed");
-        require(
-            canonicalState.version >= dispute.version,
-            "invalid version"
-        );
-
-        requireAssetPreservation(
-            canonicalState.outcome,
-            canonicalState.outcome,
-            params.participants.length
-        );
-        Channel.validateSignatures(params, canonicalState, participantSigs);
-        require(
-            Sig.verify(Channel.encodeState(canonicalState), coordSig, params.coordinator),
-            "invalid signature"
-        );
-
-        dispute.version = canonicalState.version;
-        dispute.stateHash = hashState(canonicalState);
-        dispute.phase = uint8(DisputePhase.COORDINATED);
-
-        setDispute(canonicalState.channelID, dispute);
     }
 
     /**
@@ -502,7 +588,10 @@ contract Adjudicator {
      * @dev concludeSingle attempts to conclude a channel state.
      * Reverts if the channel is already concluded.
      */
-    function concludeSingle(Channel.State memory state) internal {
+    function concludeSingle(
+        Channel.Params memory params,
+        Channel.State memory state
+    ) internal {
         Dispute storage dispute = requireGetDispute(state.channelID);
         require(dispute.stateHash == hashState(state), "invalid state");
         require(
@@ -510,13 +599,28 @@ contract Adjudicator {
             "already concluded"
         );
 
-        // If still in phase DISPUTE and the channel has an app, increase the
-        // timeout by one duration to account for phase FORCEEXEC.
-        if (dispute.phase == uint8(DisputePhase.DISPUTE) && dispute.hasApp) {
-            dispute.timeout = dispute.timeout + dispute.challengeDuration;
+        if (dispute.phase == uint8(DisputePhase.COORDINATED)) {
+            // Coordinated path: timeout already passed at coordinate() time.
+            // No further timeout check needed — proceed directly to CONCLUDED.
+            // If still in phase DISPUTE and the channel has an app, increase the
+            // timeout by one duration to account for phase FORCEEXEC.
+        } else {
+            // Non-coordinated path: block if this channel required coordination.
+            require(
+                !MultiLedger.isCoordinatedEligible(params, state),
+                "coordinated settlement required"
+            );
+            if (
+                dispute.phase == uint8(DisputePhase.DISPUTE) && dispute.hasApp
+            ) {
+                dispute.timeout = dispute.timeout + dispute.challengeDuration;
+            }
+            // solhint-disable-next-line not-rely-on-time
+            require(
+                block.timestamp >= dispute.timeout,
+                "timeout not passed yet"
+            );
         }
-        // solhint-disable-next-line not-rely-on-time
-        require(block.timestamp >= dispute.timeout, "timeout not passed yet");
         dispute.phase = uint8(DisputePhase.CONCLUDED);
 
         setDispute(state.channelID, dispute);

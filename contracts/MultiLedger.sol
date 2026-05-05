@@ -20,7 +20,7 @@ pragma abicoder v2;
 import "./Channel.sol";
 
 library MultiLedger {
-    uint8 internal constant DISPUTE_PHASE_CONCLUDED = 2;
+    uint8 internal constant DISPUTE_PHASE_DISPUTE = 0;
 
     function isCoordinatorConfigured(
         Channel.Params memory params
@@ -37,10 +37,10 @@ library MultiLedger {
             return false;
         }
 
-        require(
-            outcome.backends.length == assetsLen,
-            "backends length mismatch"
-        );
+        // Malformed state: backends array doesn't match assets — not multi-ledger.
+        if (outcome.backends.length != assetsLen) {
+            return false;
+        }
 
         uint256 firstBackend = outcome.backends[0];
         uint256 firstChainID = outcome.assets[0].chainID;
@@ -69,7 +69,7 @@ library MultiLedger {
         Channel.State memory state
     ) internal pure returns (bool) {
         return
-            currentPhase == DISPUTE_PHASE_CONCLUDED &&
+            currentPhase == DISPUTE_PHASE_DISPUTE &&
             isCoordinatedEligible(params, state);
     }
 }

@@ -98,6 +98,25 @@ library Channel {
         }
     }
 
+    /**
+     * @notice Checks that `sig` contains all signature on the state
+     * from the channel participants. Reverts otherwise.
+     * @param params The parameters corresponding to the state.
+     * @param state The state of the state channel.
+     * @param sig The signature corresponding to the coordinator.
+     */
+    function validateCoordinatorSignature(
+        Params memory params,
+        State memory state,
+        bytes memory sig
+    ) internal pure {
+        bytes memory encodedState = encodeState(state);
+        require(
+            Sig.verify(encodedState, sig, params.coordinator),
+            "invalid coordinator signature"
+        );
+    }
+
     function encodeParams(
         Params memory params
     ) internal pure returns (bytes memory) {
