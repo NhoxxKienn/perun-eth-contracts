@@ -31,6 +31,11 @@ export class Channel {
     const sigs = await this.state.sign(this.params.participants);
     return new SignedChannel(this.params, this.state, sigs);
   }
+
+  async coordSigned(): Promise<string> {
+    const coordSig = await this.state.coordSign(this.params.coordinator);
+    return coordSig;
+  }
 }
 
 export class SignedChannel extends Channel {
@@ -168,6 +173,10 @@ export class State {
   async sign(signers: Participant[]): Promise<string[]> {
     return Promise.all(signers.map(signer => sign(this.encode(), signer.ethAddress)));
   }
+
+  async coordSign(coord: string): Promise<string> {
+    return sign(this.encode(), coord);
+  }
 }
 
 export class Asset {
@@ -219,13 +228,15 @@ export class SubAlloc {
 
 export class Transaction extends Channel {
   sigs: string[];
+  coordSig: string;
 
-  constructor(parts: Participant[], balances: BigNumberish[], challengeDuration: number, nonce: string, asset: Asset, backends: number[], app: string) {
-    const params = new Params(app, challengeDuration, nonce, [parts[0], parts[1]], true);
+  constructor(parts: Participant[], balances: BigNumberish[], challengeDuration: number, nonce: string, asset: Asset, backends: number[], app: string, coordinator: string = ethers.ZeroAddress) {
+    const params = new Params(app, challengeDuration, nonce, [parts[0], parts[1]], true, coordinator);
     const outcome = new Allocation([asset], backends, [[balances[0].toString(), balances[1].toString()]], []);
     const state = new State(params.channelID(), "0", outcome, "0x00", false);
     super(params, state);
     this.sigs = [];
+    this.coordSig = "";
   }
 
   async sign(parts: Participant[]) {
@@ -239,6 +250,17 @@ export class Transaction extends Channel {
       const messageHashBytes = getBytes(messageHash);
       return await signer.signMessage(messageHashBytes);
     }));
+  }
+
+  async signCoord(coord: string) {
+    let stateEncoded = this.state.encode();
+    const provider = ethers.provider;
+    const signer = await provider.getSigner(coord);
+
+    const messageHash = keccak256(stateEncoded);
+
+    const messageHashBytes = getBytes(messageHash);
+    this.coordSig = await signer.signMessage(messageHashBytes);
   }
 }
 
