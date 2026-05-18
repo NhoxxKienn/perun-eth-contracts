@@ -45,7 +45,6 @@ After the challenge period is over, the channel outcome can either be finalized 
 
 ### Coordinated multi-ledger settlement
 
-
 - Flow: `register` (DISPUTE) → optionally `coordinate` (COORDINATED) → `conclude` (CONCLUDED)
 - Coordinated settlement allows a coordinator to commit canonical states across
   multiple ledgers (chains/backends).

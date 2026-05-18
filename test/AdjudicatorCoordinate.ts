@@ -1337,6 +1337,197 @@ describe("AdjudicatorCoordinate", function () {
             );
             await expect(res).to.be.revertedWith("not ledger");
         });
+
+        itWithBlockRevert("coordinate before timeout passes reverts", async () => {
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+            const { ledgerChannel, subchannels } = buildChannelTree(assets, backends);
+            await fundLedgerChannel(ledgerChannel, subchannels);
+            await registerWithAssertions(ledgerChannel, subchannels);
+            // Timeout has not passed — coordinate must be rejected.
+            await expect(coordinateWithSubchannels(ledgerChannel, subchannels))
+                .to.be.revertedWith("refutation timeout not passed");
+        });
+
+        itWithBlockRevert("coordinate with wrong coordSigs length reverts", async () => {
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+            const { ledgerChannel, subchannels } = buildChannelTree(assets, backends);
+            await fundLedgerChannel(ledgerChannel, subchannels);
+            await registerWithAssertions(ledgerChannel, subchannels);
+            await advanceBlockTime(2 * timeout + 1);
+
+            // Supply only the ledger's coord sig, omitting all subchannel sigs.
+            const coordSigs = [await ledgerChannel.coordSigned()];
+            await expect(
+                adj.coordinate(
+                    (await ledgerChannel.signed()).serialize(),
+                    await Promise.all(subchannels.map(async ch => (await ch.signed()).serialize())),
+                    coordSigs,
+                    { from: adjAccount, gasLimit: 500_000 }
+                )
+            ).to.be.revertedWith("coordSigs length mismatch");
+        });
+
+        itWithBlockRevert("register after COORDINATED reverts", async () => {
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+            const { ledgerChannel, subchannels } = buildChannelTree(assets, backends);
+            await fundLedgerChannel(ledgerChannel, subchannels);
+            await registerWithAssertions(ledgerChannel, subchannels);
+            await advanceBlockTime(2 * timeout + 1);
+            await coordinateWithSubchannels(ledgerChannel, subchannels);
+            await assertDisputePhase(ledgerChannel.state.channelID, DisputePhase.COORDINATED);
+
+            // Re-registering with the same state is a no-op (same-hash early-return).
+            // Use a higher version so registerSingle skips that early-return and reaches
+            // the require(phase == DISPUTE) guard, which now fails with "incorrect phase".
+            const originalVersion = ledgerChannel.state.version;
+            ledgerChannel.state.version = (Number(originalVersion) + 1).toString();
+            await expect(registerChannel(ledgerChannel, subchannels))
+                .to.be.revertedWith("incorrect phase");
+            ledgerChannel.state.version = originalVersion;
+        });
+
+        itWithBlockRevert("coordinate then conclude verifies holdings", async () => {
+            // asset[0] has a real AssetHolder so holdings can be checked on-chain.
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+            const { ledgerChannel, subchannels } = buildChannelTree(assets, backends);
+            await fundLedgerChannel(ledgerChannel, subchannels);
+            await registerWithAssertions(ledgerChannel, subchannels);
+            await advanceBlockTime(2 * timeout + 1);
+            await coordinateWithSubchannels(ledgerChannel, subchannels);
+
+            const res = await concludeWithSubchannels(ledgerChannel, subchannels);
+            const receipt = await res.wait();
+            if (!receipt) throw new Error("conclude transaction failed - receipt is null");
+
+            await assertConclude(receipt, ledgerChannel, subchannels, true);
+        });
+
+        itWithBlockRevert("concludeFinal from COORDINATED phase succeeds", async () => {
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+
+            // Simple flat channel — concludeFinal requires no locked sub-channels.
+            const ledgerParams = new Params(appAddress, timeout, "0xC0FEEF", parts, true, coord);
+            const directBalances = assets.map(() => [
+                getUint(balance[0]).toString(),
+                getUint(balance[1]).toString()
+            ]);
+            const ledgerOutcome = new Allocation(assets, backends, directBalances, []);
+            const ledgerState = new State(ledgerParams.channelID(), "5", ledgerOutcome, "0x00", false);
+            const ch = new Channel(ledgerParams, ledgerState);
+
+            await depositWithAssertions(ledgerState.channelID, parts[0].ethAddress, balance[0]);
+            await depositWithAssertions(ledgerState.channelID, parts[1].ethAddress, balance[1]);
+            await registerWithAssertions(ch, []);
+            await advanceBlockTime(timeout + 1);
+            await coordinateWithSubchannels(ch, []);
+            await assertDisputePhase(ledgerState.channelID, DisputePhase.COORDINATED);
+
+            // A fully-signed final state supersedes the coordinated dispute.
+            const finalState = new State(ledgerState.channelID, "6", ledgerOutcome, "0x00", true);
+            const finalSigs = await finalState.sign(parts);
+
+            const res = await adj.concludeFinal(
+                ledgerParams.serialize(),
+                finalState.serialize(),
+                finalSigs,
+            );
+            const receipt = await res.wait();
+            if (!receipt) throw new Error("concludeFinal failed - receipt is null");
+            await assertDisputePhase(ledgerState.channelID, DisputePhase.CONCLUDED);
+        });
+
+        itWithBlockRevert("conclude requires coordinator-updated subchannel state", async () => {
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+            // sub3 has no nested sub-channels, making it the simplest version-bump target.
+            const { ledgerChannel, subchannels } = buildChannelTree(assets, backends, "10");
+            await fundLedgerChannel(ledgerChannel, subchannels);
+            await registerWithAssertions(ledgerChannel, subchannels);
+            await advanceBlockTime(2 * timeout + 1);
+
+            // Coordinator brings a higher-version canonical state for sub3 from the sibling chain.
+            const originalVersion = subchannels[3].state.version;
+            const updatedVersion = (Number(originalVersion) + 1).toString();
+            subchannels[3].state.version = updatedVersion;
+            await coordinateWithSubchannels(ledgerChannel, subchannels);
+
+            const dispute3 = await adj.disputes(subchannels[3].state.channelID);
+            expect(dispute3.version).to.equal(BigInt(updatedVersion));
+
+            // conclude with the stale (registered) version must fail.
+            subchannels[3].state.version = originalVersion;
+            await expect(concludeWithSubchannels(ledgerChannel, subchannels))
+                .to.be.revertedWith("invalid state");
+
+            // conclude with the coordinator-committed version must succeed.
+            subchannels[3].state.version = updatedVersion;
+            const res = await concludeWithSubchannels(ledgerChannel, subchannels);
+            const receipt = await res.wait();
+            if (!receipt) throw new Error("conclude transaction failed - receipt is null");
+            await assertConclude(receipt, ledgerChannel, subchannels, false);
+        });
+
+        itWithBlockRevert("coordinate with subchannel missing coordinator reverts", async () => {
+            const assets = [asset, new Asset(asset.chainID, zeroAddress, zeroAddress)];
+            const backends = [1, 2];
+
+            // Sub-channel with no coordinator — not coordination-eligible.
+            const subParams = new Params(appAddress, timeout, "0xBADC0", parts, false, zeroAddress);
+            const subBalances = assets.map(() => [ether(5).toString(), ether(5).toString()]);
+            const subOutcome = new Allocation(assets, backends, subBalances, []);
+            const subState = new State(subParams.channelID(), "1", subOutcome, "0x00", false);
+            const subChannel = new Channel(subParams, subState);
+
+            const subTotals = subBalances.map(bals =>
+                bals.reduce((s: bigint, v) => s + getUint(v), 0n).toString()
+            );
+
+            // Ledger channel with coordinator.
+            const ledgerParams = new Params(appAddress, timeout, "0xB00B5", parts, true, coord);
+            const ledgerDirectBalances = assets.map(() => [
+                getUint(ether(10)).toString(),
+                getUint(ether(20)).toString()
+            ]);
+            const ledgerOutcome = new Allocation(
+                assets, backends, ledgerDirectBalances,
+                [new SubAlloc(subState.channelID, subTotals, [0, 1])]
+            );
+            const ledgerState = new State(ledgerParams.channelID(), "10", ledgerOutcome, "0x00", false);
+            const ledgerChannel = new Channel(ledgerParams, ledgerState);
+
+            const totalPerPart = [
+                (getUint(ether(10)) + getUint(ether(5))).toString(),
+                (getUint(ether(20)) + getUint(ether(5))).toString()
+            ];
+            await depositWithAssertions(ledgerState.channelID, parts[0].ethAddress, totalPerPart[0]);
+            await depositWithAssertions(ledgerState.channelID, parts[1].ethAddress, totalPerPart[1]);
+            await adj.register(
+                (await ledgerChannel.signed()).serialize(),
+                [(await subChannel.signed()).serialize()],
+                { from: adjAccount }
+            );
+            await advanceBlockTime(2 * timeout + 1);
+
+            // Coordinator signs the sub-channel state, but the sub-channel params have
+            // coordinator=zeroAddress, so canEnterCoordinated returns false for it.
+            const coordSigs = [
+                await ledgerChannel.coordSigned(),
+                await subState.coordSign(coord),
+            ];
+            await expect(
+                adj.coordinate(
+                    (await ledgerChannel.signed()).serialize(),
+                    [(await subChannel.signed()).serialize()],
+                    coordSigs,
+                    { from: adjAccount, gasLimit: 500_000 }
+                )
+            ).to.be.revertedWith("incorrect phase");
+        });
     });
 
     describeWithBlockRevert("dispute, coordinate, conclude with virtual channel", () => {

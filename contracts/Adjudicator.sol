@@ -288,21 +288,12 @@ contract Adjudicator {
             state.channelID
         );
         require(registered, "not registered");
+        // canEnterCoordinated already guarantees phase == DISPUTE; COORDINATED and
+        // CONCLUDED are ruled out by this single check.
         require(
             MultiLedger.canEnterCoordinated(dispute.phase, params, state),
             "incorrect phase"
         );
-
-        if (registered) {
-            require(
-                dispute.phase != uint8(DisputePhase.COORDINATED),
-                "coordinated already"
-            );
-            require(
-                dispute.phase != uint8(DisputePhase.CONCLUDED),
-                "concluded already"
-            );
-        }
 
         // Challenge window must be closed.
         // solhint-disable-next-line not-rely-on-time
@@ -611,10 +602,12 @@ contract Adjudicator {
         );
 
         if (dispute.phase == uint8(DisputePhase.COORDINATED)) {
-            // Coordinated path: timeout already passed at coordinate() time.
-            // No further timeout check needed — proceed directly to CONCLUDED.
-            // If still in phase DISPUTE and the channel has an app, increase the
-            // timeout by one duration to account for phase FORCEEXEC.
+            // Coordinated path: explicitly verify the challenge window is closed.
+            // solhint-disable-next-line not-rely-on-time
+            require(
+                block.timestamp >= dispute.timeout,
+                "refutation timeout not passed"
+            );
         } else {
             // Non-coordinated path: block if this channel required coordination.
             require(
