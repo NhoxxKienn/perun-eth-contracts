@@ -293,6 +293,17 @@ contract Adjudicator {
             "incorrect phase"
         );
 
+        if (registered) {
+            require(
+                dispute.phase != uint8(DisputePhase.COORDINATED),
+                "coordinated already"
+            );
+            require(
+                dispute.phase != uint8(DisputePhase.CONCLUDED),
+                "concluded already"
+            );
+        }
+
         // Challenge window must be closed.
         // solhint-disable-next-line not-rely-on-time
         require(
