@@ -72,7 +72,9 @@ library MultiLedger {
         Channel.State memory state
     ) internal pure returns (bool) {
         return
-            currentPhase == DISPUTE_PHASE_DISPUTE &&
+            (currentPhase == DISPUTE_PHASE_DISPUTE ||
+                currentPhase == DISPUTE_PHASE_COORDINATED ||
+                currentPhase == DISPUTE_PHASE_CONCLUDED) &&
             isCoordinatedEligible(params, state);
     }
 

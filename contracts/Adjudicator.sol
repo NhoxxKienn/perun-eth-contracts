@@ -294,28 +294,29 @@ contract Adjudicator {
             MultiLedger.canEnterCoordinated(dispute.phase, params, state),
             "incorrect phase"
         );
+        if (dispute.phase == uint8(DisputePhase.DISPUTE)) {
+            require(
+                block.timestamp >= dispute.timeout,
+                "refutation timeout not passed"
+            );
+            // Version must not go backwards.
+            require(state.version >= dispute.version, "invalid version");
+            // Require signatures of all participants and coordinator.
+            Channel.validateSignatures(params, state, channel.sigs);
+            Channel.validateCoordinatorSignature(params, state, coordSig);
 
-        // Challenge window must be closed.
-        // solhint-disable-next-line not-rely-on-time
-        require(
-            block.timestamp >= dispute.timeout,
-            "refutation timeout not passed"
-        );
-        // Version must not go backwards.
-        require(state.version >= dispute.version, "invalid version");
-        // Require signatures of all participants and coordinator.
-        Channel.validateSignatures(params, state, channel.sigs);
-        Channel.validateCoordinatorSignature(params, state, coordSig);
-
-        // State-progress: coordinator brings sigma* from sibling chain.
-        // Only overwrite if version is strictly higher; otherwise keep stored hash.
-        if (state.version > dispute.version) {
-            dispute.version = state.version;
-            dispute.stateHash = hashState(state);
+            // State-progress: coordinator brings sigma* from sibling chain.
+            // Only overwrite if version is strictly higher; otherwise keep stored hash.
+            if (state.version > dispute.version) {
+                dispute.version = state.version;
+                dispute.stateHash = hashState(state);
+            }
+            dispute.phase = uint8(DisputePhase.COORDINATED);
+            // Write state.
+            setDispute(state.channelID, dispute);
+        } else if (dispute.phase == uint8(DisputePhase.COORDINATED)) {
+            require(dispute.stateHash == hashState(state), "invalid state");
         }
-        dispute.phase = uint8(DisputePhase.COORDINATED);
-        // Write state.
-        setDispute(state.channelID, dispute);
     }
 
     /**
